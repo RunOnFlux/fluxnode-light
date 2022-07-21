@@ -8,4 +8,6 @@ warn.log
 debug.log
 info.log
 
+personal.js
+
 .env

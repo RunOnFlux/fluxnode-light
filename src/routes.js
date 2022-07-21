@@ -1,12 +1,11 @@
-const balanceService = require('./services/balanceService');
+const fluxnodeService = require('./services/fluxnodeService');
 
 const prefix = 'api';
 
 module.exports = (app) => {
-  app.get(`/${prefix}/test`, (req, res) => {
-    balanceService.getTest(req, res);
-  });
-  app.get(`/${prefix}/data`, (req, res) => {
-    balanceService.getData(req, res);
+  app.get(`/${prefix}/start/:txid/:index`, (req, res) => {
+    const { txid } = req.params;
+    const { index } = req.params;
+    fluxnodeService.getStart(txid, index, res);
   });
 };
