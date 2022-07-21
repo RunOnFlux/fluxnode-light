@@ -6,6 +6,6 @@ module.exports = (app) => {
   app.get(`/${prefix}/start/:txid/:index`, (req, res) => {
     const { txid } = req.params;
     const { index } = req.params;
-    fluxnodeService.getStart(txid, index, res);
+    fluxnodeService.getStart(txid, index, req, res);
   });
 };

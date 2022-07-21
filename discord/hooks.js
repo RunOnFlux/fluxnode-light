@@ -6,7 +6,7 @@ dotenv.config();
 
 const hook = new Webhook(`${process.env.WEB_HOOK || config.discordHook}`);
 
-async function sendHook(txid, index, success, status) {
+async function sendHook(txid, index, success, status, ipAddress) {
   let color = '#2ECC71'; // Green
 
   if (!success) {
@@ -18,6 +18,7 @@ async function sendHook(txid, index, success, status) {
     .addField('Txid', `${txid}`, true)
     .addField('Index', `${index}`, true)
     .addField('Message', `${JSON.stringify(status)}`)
+    .addField('From IP', `${ipAddress}`)
     .setColor(color)
     .setTimestamp();
 

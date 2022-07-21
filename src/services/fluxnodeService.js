@@ -13,15 +13,15 @@ function buildApiCall(collateralHash) {
   return `https://explorer.runonflux.io/api/tx/${collateralHash}`;
 }
 
-async function sendTx(tx, res, collateralHash, index) {
+async function sendTx(tx, res, collateralHash, index, ipAddress) {
   try {
     const apiUrl = `https://api.runonflux.io/daemon/sendrawtransaction/${tx}`;
     const response = await axios.get(apiUrl);
-    discord.sendHook(collateralHash, index, response.data.status !== 'error', response.data);
+    discord.sendHook(collateralHash, index, response.data.status !== 'error', response.data, ipAddress);
     res.json(response.data);
   } catch (error) {
     log.error(error);
-    discord.sendHook(collateralHash, index, false, error);
+    discord.sendHook(collateralHash, index, false, error, ipAddress);
   }
 }
 
@@ -71,12 +71,13 @@ async function fetchCollateralAddress(collateralHash, index) {
 }
 
 // eslint-disable-next-line no-unused-vars
-function validateCollateral(collateralHash, index, res) {
+function validateCollateral(collateralHash, index, req, res) {
   fetchCollateralAddress(collateralHash, index).then((address) => {
+    let ipAddress = req.socket.remoteAddress;
     if (address === undefined) {
       log.info('Validating collateral: address in undefined');
       const response = { msg: 'Failed validating collateral. Address undefined' };
-      discord.sendHook(collateralHash, index, false, response.msg);
+      discord.sendHook(collateralHash, index, false, response.msg, ipAddress);
       res.json(response);
       return;
     }
@@ -85,7 +86,7 @@ function validateCollateral(collateralHash, index, res) {
       log.info(`Validating collateral: address matches for collateral ${collateralHash}:${index}`);
       const timestamp = Date.now() / 1000;
       const tx = fluxnode.startZelNode(collateralHash.toString(), index.toString(), p2shprivkey, fluxnodePrivateKey, timestamp.toString(), false);
-      sendTx(tx, res, collateralHash, index);
+      sendTx(tx, res, collateralHash, index, ipAddress);
       return;
     }
 
@@ -96,14 +97,14 @@ function validateCollateral(collateralHash, index, res) {
 }
 
 // eslint-disable-next-line no-unused-vars
-function processCall(collateralHash, index, res) {
+function processCall(collateralHash, index, req, res) {
   log.info(`Processing call for hash ${collateralHash}:${index}`);
-  validateCollateral(collateralHash, index, res);
+  validateCollateral(collateralHash, index, req, res);
 }
 
-function getStart(txid, index, res) {
+function getStart(txid, index, req, res) {
   try {
-    processCall(txid, index, res);
+    processCall(txid, index, req, res);
   } catch (error) {
     log.error(error);
     res.status(500).json({ error: JSON.stringify(error) });
