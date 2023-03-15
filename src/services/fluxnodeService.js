@@ -58,8 +58,8 @@ async function fetchCollateralAddress(collateralHash, index) {
       address = undefined;
     }
 
-    if (amount !== '40000.00000000' && amount !== '25000.00000000') {
-      log.info(`Fetching address: Amount wasn't 40000.00000000. Given = ${amount}`);
+    if (amount !== '40000.00000000' && amount !== '12500.00000000') {
+      log.info(`Fetching address: Amount wasn't correct. Given = ${amount}`);
       address = undefined;
     }
 
