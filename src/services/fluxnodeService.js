@@ -1,13 +1,18 @@
+// eslint-disable-next-line import/no-import-module-exports
+const fluxnode = require('@runonflux/flux-sdk');
+
 const config = require('config');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
 const log = require('../lib/log');
 const discord = require('../../discord/hooks');
-const fluxnode = require('../lib/fluxnode');
 
 dotenv.config();
-const { collateralAddress, p2shprivkey, fluxnodePrivateKey } = config;
+
+const {
+  collateralAddress, p2shprivkey, fluxnodePrivateKey, redeemScript
+} = config;
 
 function buildApiCall(collateralHash) {
   return `https://explorer.runonflux.io/api/tx/${collateralHash}`;
@@ -84,8 +89,17 @@ function validateCollateral(collateralHash, index, req, res) {
 
     if (address === collateralAddress) {
       log.info(`Validating collateral: address matches for collateral ${collateralHash}:${index}`);
-      const timestamp = Date.now() / 1000;
-      const tx = fluxnode.startZelNode(collateralHash.toString(), index.toString(), p2shprivkey, fluxnodePrivateKey, timestamp.toString(), false);
+      const timestamp = Math.round(new Date().getTime() / 1000).toString();
+      const tx = fluxnode.startFluxNodev6(
+        collateralHash.toString(),
+        index.toString(),
+        p2shprivkey,
+        fluxnodePrivateKey,
+        timestamp,
+        true,
+        true,
+        redeemScript,
+      );
       sendTx(tx, res, collateralHash, index, ipAddress);
       return;
     }

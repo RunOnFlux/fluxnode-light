@@ -10,6 +10,7 @@
   "author": "Jeremy Anderson",
   "license": "ISC",
   "dependencies": {
+    "@runonflux/flux-sdk": "^1.0.2",
     "axios": "^0.27.2",
     "bitcoinjs-message": "^2.2.0",
     "bs58check": "^2.1.2",

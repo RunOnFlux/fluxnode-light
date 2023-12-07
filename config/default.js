@@ -6,4 +6,5 @@ module.exports = {
   collateralAddress: '',
   fluxnodePrivateKey: '',
   p2shprivkey: '',
+  redeemScript: '',
 };
