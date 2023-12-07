@@ -78,7 +78,7 @@ async function fetchCollateralAddress(collateralHash, index) {
 // eslint-disable-next-line no-unused-vars
 function validateCollateral(collateralHash, index, req, res) {
   fetchCollateralAddress(collateralHash, index).then((address) => {
-    let ipAddress = req.socket.remoteAddress;
+    const ipAddress = req.socket.remoteAddress;
     if (address === undefined) {
       log.info('Validating collateral: address in undefined');
       const response = { msg: 'Failed validating collateral. Address undefined' };
