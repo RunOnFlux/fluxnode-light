@@ -96,8 +96,8 @@ function validateCollateral(collateralHash, index, req, res) {
         p2shprivkey,
         fluxnodePrivateKey,
         timestamp,
-        true,
-        true,
+        false,
+        false,
         redeemScript,
       );
       sendTx(tx, res, collateralHash, index, ipAddress);
