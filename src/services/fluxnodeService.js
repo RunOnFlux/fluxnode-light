@@ -1,5 +1,5 @@
 // eslint-disable-next-line import/no-import-module-exports
-const fluxnode = require('@runonflux/flux-sdk');
+const { fluxnode } = require('@runonflux/flux-sdk');
 
 const config = require('config');
 const axios = require('axios');
@@ -96,7 +96,6 @@ function validateCollateral(collateralHash, index, req, res) {
         p2shprivkey,
         fluxnodePrivateKey,
         timestamp,
-        false,
         false,
         redeemScript,
       );
