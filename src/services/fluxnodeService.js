@@ -96,6 +96,7 @@ function validateCollateral(collateralHash, index, req, res) {
         p2shprivkey,
         fluxnodePrivateKey,
         timestamp,
+        true,
         false,
         redeemScript,
       );
