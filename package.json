@@ -14,7 +14,7 @@
     "axios": "^0.27.2",
     "bitcoinjs-message": "^2.2.0",
     "bs58check": "^2.1.2",
-    "config": "^3.3.6",
+    "config": "^4.1.1",
     "cors": "^2.8.5",
     "create-hash": "^1.2.0",
     "discord-webhook-node": "^1.1.8",
