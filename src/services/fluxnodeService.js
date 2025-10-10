@@ -59,12 +59,17 @@ async function sendTx(tx, res, collateralHash, index, ipAddress, addressName) {
     discord.sendHook(collateralHash, index, response.data.status !== 'error', hookData, ipAddress);
     res.json(response.data);
   } catch (error) {
-    log.error(error);
+    // Log the actual error message and API response if available
+    const errorMessage = error.response?.data?.error || error.response?.data || error.message;
+    log.error(`Failed to send transaction: ${JSON.stringify(errorMessage)}`);
+
     const errorData = {
-      error: error.message,
+      status: 'error',
+      error: errorMessage,
       addressName: addressName || 'default',
     };
     discord.sendHook(collateralHash, index, false, errorData, ipAddress);
+    res.json(errorData);
   }
 }
 
