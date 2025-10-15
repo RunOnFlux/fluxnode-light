@@ -4,8 +4,14 @@
   "description": "Helpful service for starting Titan fluxnodes",
   "main": "server.js",
   "scripts": {
-    "start": "nodemon server.js",
-    "server": "nodemon server.js"
+    "start": "node server.js",
+    "dev": "NODE_ENV=development nodemon server.js",
+    "server": "nodemon server.js",
+    "test": "NODE_ENV=test mocha test/**/*.test.js --timeout 10000",
+    "health": "curl http://localhost:9001/health",
+    "metrics": "curl http://localhost:9001/metrics",
+    "logs:clean": "rm -rf logs/*.log",
+    "generate:apikey": "node scripts/generate-api-key.js"
   },
   "author": "Jeremy Anderson",
   "license": "ISC",
@@ -14,16 +20,21 @@
     "axios": "^0.27.2",
     "bitcoinjs-message": "^2.2.0",
     "bs58check": "^2.1.2",
+    "compression": "^1.8.1",
     "config": "^4.1.1",
     "cors": "^2.8.5",
     "create-hash": "^1.2.0",
     "discord-webhook-node": "^1.1.8",
     "dotenv": "^16.0.0",
     "express": "^4.18.1",
+    "express-rate-limit": "^8.1.0",
     "groestl-hash-js": "^1.0.0",
+    "helmet": "^8.1.0",
     "morgan": "^1.10.0",
     "nodemon": "^2.0.16",
-    "secp256k1": "^3.8.0"
+    "secp256k1": "^3.8.0",
+    "winston": "^3.18.3",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "chai": "^4.3.6",

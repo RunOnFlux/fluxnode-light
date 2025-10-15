@@ -1,6 +1,6 @@
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const dotenv = require('dotenv');
-const config = require('config');
+const config = require('../config/env-config');
 
 dotenv.config();
 

@@ -1,236 +1,380 @@
-// eslint-disable-next-line import/no-import-module-exports
 const { fluxnode } = require('@runonflux/flux-sdk');
-
-const config = require('config');
-const axios = require('axios');
-const dotenv = require('dotenv');
-
+const config = require('../../config/env-config');
+const ApiClient = require('../lib/api-client');
 const log = require('../lib/log');
 const discord = require('../../discord/hooks');
 
-dotenv.config();
+// Initialize API client with retry logic
+const apiClient = new ApiClient({
+  timeout: config.api.timeout,
+  maxRetries: config.api.maxRetries,
+  retryDelay: config.api.retryDelay,
+  cacheEnabled: config.cache.enabled,
+  cacheTTL: config.cache.ttl,
+  maxCacheSize: config.cache.maxSize,
+});
 
-const { addresses } = config;
+// Circuit breakers for external services
+const explorerCircuit = apiClient.createCircuitBreaker('Explorer API', 5, 60000);
+const fluxApiCircuit = apiClient.createCircuitBreaker('Flux API', 5, 60000);
 
-// Helper function to get address config by name
-function getAddressConfig(addressName) {
-  if (!addresses || addresses.length === 0) {
-    throw new Error('No addresses configured. Please configure at least one address in config/default.js');
+class FluxnodeService {
+  constructor() {
+    this.addresses = config.addresses || [];
+    this.validateConfiguration();
   }
 
-  // If no addressName specified, use the first one
-  if (!addressName) {
-    return addresses[0];
-  }
+  // Validate service configuration on startup
+  validateConfiguration() {
+    if (!this.addresses || this.addresses.length === 0) {
+      throw new Error('No addresses configured. Please configure at least one address in your .env file');
+    }
 
-  // Find by name
-  const addressConfig = addresses.find((addr) => addr.name === addressName);
-  if (!addressConfig) {
-    throw new Error(`Address configuration not found for name: ${addressName}`);
-  }
+    // Validate each address configuration
+    for (const [index, addr] of this.addresses.entries()) {
+      const required = ['name', 'collateralAddress', 'fluxnodePrivateKey', 'p2shprivkey', 'redeemScript'];
+      const missing = required.filter(field => !addr[field]);
 
-  return addressConfig;
-}
-
-// Helper function to list all available addresses
-function listAddresses() {
-  if (!addresses || addresses.length === 0) {
-    throw new Error('No addresses configured. Please configure at least one address in config/default.js');
-  }
-
-  return addresses.map((addr) => ({
-    name: addr.name,
-    collateralAddress: addr.collateralAddress,
-  }));
-}
-
-function buildApiCall(collateralHash) {
-  return `https://explorer.runonflux.io/api/tx/${collateralHash}`;
-}
-
-async function sendTx(tx, res, collateralHash, index, ipAddress, addressName) {
-  try {
-    const apiUrl = `https://api.runonflux.io/daemon/sendrawtransaction/${tx}`;
-    const response = await axios.get(apiUrl);
-    const hookData = {
-      ...response.data,
-      addressName: addressName || 'default',
-    };
-    discord.sendHook(collateralHash, index, response.data.status !== 'error', hookData, ipAddress);
-    res.json(response.data);
-  } catch (error) {
-    // Log the actual error message and API response if available
-    const errorMessage = error.response?.data?.error || error.response?.data || error.message;
-    log.error(`Failed to send transaction: ${JSON.stringify(errorMessage)}`);
-
-    const errorData = {
-      status: 'error',
-      error: errorMessage,
-      addressName: addressName || 'default',
-    };
-    discord.sendHook(collateralHash, index, false, errorData, ipAddress);
-    res.json(errorData);
-  }
-}
-
-// eslint-disable-next-line no-unused-vars
-async function fetchCollateralAddress(collateralHash, index) {
-  try {
-    log.info(`Fetching Address for collateral ${collateralHash}:${index}`);
-
-    const apiUrl = buildApiCall(collateralHash);
-    const response = await axios.get(apiUrl);
-
-    const json = response.data;
-
-    let address;
-    let type;
-    let amount;
-    if (json.txid === collateralHash) {
-      if (json.vout.length >= index) {
-        const output = json.vout[index];
-        const addressIndex = 0;
-        address = output.scriptPubKey.addresses[addressIndex];
-        type = output.scriptPubKey.type;
-        amount = output.value;
-        log.info(`${address} ${type} ${amount}`);
-      } else {
-        log.info(`Fetching address: index given wasn't within the length of the vout list. Given = ${index}. List length = ${json.vout.length}`);
+      if (missing.length > 0) {
+        throw new Error(`Address ${index + 1} is missing required fields: ${missing.join(', ')}`);
       }
-    } else {
-      log.info(`Fetching address: txid didn't match ${collateralHash} != ${response.data.txid}`);
+
+      // Validate address format
+      if (!/^t[1-9A-Za-z]{34}$/.test(addr.collateralAddress)) {
+        log.warn(`Address ${addr.name} has potentially invalid collateral address format`);
+      }
     }
 
-    if (type !== 'scripthash') {
-      log.info(`Fetching address: Address type wasn't scripthash. Given = ${type}`);
-      address = undefined;
-    }
-
-    if (amount !== '40000.00000000' && amount !== '12500.00000000') {
-      log.info(`Fetching address: Amount wasn't correct. Given = ${amount}`);
-      address = undefined;
-    }
-
-    return address;
-  } catch (error) {
-    log.error(error);
-    return undefined;
+    log.info(`Service configured with ${this.addresses.length} address(es)`);
   }
-}
 
-// eslint-disable-next-line no-unused-vars
-function validateCollateral(collateralHash, index, req, res, addressName) {
-  fetchCollateralAddress(collateralHash, index).then((address) => {
-    const ipAddress = req.socket.remoteAddress;
-    if (address === undefined) {
-      log.info('Validating collateral: address in undefined');
-      const response = { msg: 'Failed validating collateral. Address undefined' };
-      discord.sendHook(collateralHash, index, false, response.msg, ipAddress);
-      res.json(response);
-      return;
+  // Get address configuration by name
+  getAddressConfig(addressName) {
+    if (!addressName) {
+      // Return first address for backward compatibility
+      return this.addresses[0];
     }
 
-    // Get the address configuration
-    let addressConfig;
+    const config = this.addresses.find(addr => addr.name === addressName);
+    if (!config) {
+      throw new Error(`Address configuration not found for: ${addressName}`);
+    }
+
+    return config;
+  }
+
+  // Find address config by collateral address
+  findAddressByCollateral(collateralAddress) {
+    return this.addresses.find(addr => addr.collateralAddress === collateralAddress);
+  }
+
+  // List all configured addresses (public info only)
+  listAddresses() {
+    return this.addresses.map(addr => ({
+      name: addr.name,
+      collateralAddress: addr.collateralAddress,
+    }));
+  }
+
+  // Build API URL for transaction lookup
+  buildTransactionUrl(txid) {
+    return `${config.api.explorerUrl}/tx/${txid}`;
+  }
+
+  // Fetch and validate collateral address from blockchain
+  async fetchCollateralInfo(txid, index) {
+    if (!explorerCircuit.canAttempt()) {
+      throw new Error('Explorer API circuit breaker is open - too many failures');
+    }
+
     try {
-      // If addressName is provided, use specific address
-      if (addressName) {
-        addressConfig = getAddressConfig(addressName);
-        log.info(`Using specified address config: ${addressConfig.name} - ${addressConfig.collateralAddress}`);
-      } else {
-        // Legacy mode: loop through all addresses to find a match
-        const allAddresses = listAddresses();
-        log.info(`Legacy mode: searching through ${allAddresses.length} addresses for match with ${address}`);
+      const url = this.buildTransactionUrl(txid);
+      log.debug(`Fetching collateral info from: ${url}`);
 
-        for (const addr of allAddresses) {
-          const config = getAddressConfig(addr.name);
-          if (config.collateralAddress === address) {
-            addressConfig = config;
-            log.info(`Found matching address config: ${addressConfig.name} - ${addressConfig.collateralAddress}`);
-            break;
-          }
-        }
+      const response = await apiClient.get(url);
 
-        if (!addressConfig) {
-          log.info(`No matching address configuration found for ${address}`);
-          const response = { msg: 'Failed validating collateral. No matching address configuration found' };
-          discord.sendHook(collateralHash, index, false, response.msg, ipAddress);
-          res.json(response);
-          return;
-        }
+      if (!response || response.txid !== txid) {
+        throw new Error(`Transaction ID mismatch: expected ${txid}, got ${response?.txid}`);
       }
+
+      // Parse output
+      const outputIndex = parseInt(index, 10);
+      if (!response.vout || outputIndex >= response.vout.length) {
+        throw new Error(`Invalid output index ${index}. Transaction has ${response.vout?.length || 0} outputs`);
+      }
+
+      const output = response.vout[outputIndex];
+
+      // Validate output
+      const validation = this.validateCollateralOutput(output);
+      if (!validation.valid) {
+        throw new Error(`Invalid collateral: ${validation.error}`);
+      }
+
+      explorerCircuit.recordSuccess();
+
+      return {
+        address: validation.address,
+        amount: validation.amount,
+        type: validation.type,
+      };
+
     } catch (error) {
-      log.error(`Error getting address config: ${error.message}`);
-      const response = { msg: `Failed to get address configuration: ${error.message}` };
-      discord.sendHook(collateralHash, index, false, response.msg, ipAddress);
-      res.json(response);
-      return;
+      explorerCircuit.recordFailure();
+      log.error(`Failed to fetch collateral info: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Validate collateral output
+  validateCollateralOutput(output) {
+    // Check script type
+    if (output.scriptPubKey?.type !== 'scripthash') {
+      return {
+        valid: false,
+        error: `Invalid script type: ${output.scriptPubKey?.type} (expected scripthash)`,
+      };
     }
 
-    if (address === addressConfig.collateralAddress) {
-      log.info(`Validating collateral: address matches for collateral ${collateralHash}:${index}`);
-      const timestamp = Math.round(new Date().getTime() / 1000).toString();
+    // Check for address
+    const addresses = output.scriptPubKey?.addresses;
+    if (!addresses || addresses.length === 0) {
+      return {
+        valid: false,
+        error: 'No addresses found in output',
+      };
+    }
+
+    const address = addresses[0];
+    const amount = output.value;
+
+    // Validate amount (Titan: 12500, others: 40000)
+    const validAmounts = ['12500.00000000', '40000.00000000'];
+    if (!validAmounts.includes(amount)) {
+      return {
+        valid: false,
+        error: `Invalid collateral amount: ${amount}`,
+      };
+    }
+
+    return {
+      valid: true,
+      address,
+      amount,
+      type: amount === '12500.00000000' ? 'Titan' : 'Standard',
+    };
+  }
+
+  // Generate and send start transaction
+  async generateStartTransaction(collateralInfo, txid, index, addressConfig) {
+    try {
+      const timestamp = Math.round(Date.now() / 1000).toString();
+
+      log.info(`Generating start transaction for ${addressConfig.name}`);
+      log.debug(`Collateral: ${txid}:${index}, Address: ${collateralInfo.address}`);
+
       const tx = fluxnode.startFluxNodev6(
-        collateralHash.toString(),
+        txid,
         index.toString(),
         addressConfig.p2shprivkey,
         addressConfig.fluxnodePrivateKey,
         timestamp,
-        true,
-        false,
-        addressConfig.redeemScript,
+        true, // compressed
+        false, // version 6
+        addressConfig.redeemScript
       );
-      sendTx(tx, res, collateralHash, index, ipAddress, addressConfig.name);
-      return;
+
+      if (!tx) {
+        throw new Error('Failed to generate start transaction');
+      }
+
+      return tx;
+
+    } catch (error) {
+      log.error(`Failed to generate start transaction: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Broadcast transaction to network
+  async broadcastTransaction(tx, txid, index, ipAddress, addressName) {
+    if (!fluxApiCircuit.canAttempt()) {
+      throw new Error('Flux API circuit breaker is open - too many failures');
     }
 
-    log.info('Failed to validate collateral');
-    const response = { msg: 'Failed validating collateral. Address not expected value' };
-    res.json(response);
-  });
-}
+    try {
+      const url = `${config.api.fluxApiUrl}/daemon/sendrawtransaction/${tx}`;
+      log.info(`Broadcasting transaction to: ${url}`);
 
-// eslint-disable-next-line no-unused-vars
-function processCall(collateralHash, index, req, res, addressName) {
-  log.info(`Processing call for hash ${collateralHash}:${index} with address: ${addressName || 'default'}`);
-  validateCollateral(collateralHash, index, req, res, addressName);
-}
+      const response = await apiClient.get(url);
 
-function getStart(txid, index, req, res, addressName) {
-  try {
-    processCall(txid, index, req, res, addressName);
-  } catch (error) {
-    log.error(error);
-    res.status(500).json({ error: JSON.stringify(error) });
+      const success = response?.status !== 'error';
+
+      // Log audit event
+      log.audit('TRANSACTION_BROADCAST', {
+        txid,
+        index,
+        success,
+        ipAddress,
+        addressName,
+        response: response?.data || response,
+      });
+
+      // Send Discord notification
+      if (config.discord.enabled) {
+        const hookData = {
+          ...response,
+          addressName: addressName || 'default',
+        };
+        discord.sendHook(txid, index, success, hookData, ipAddress);
+      }
+
+      if (success) {
+        fluxApiCircuit.recordSuccess();
+      } else {
+        fluxApiCircuit.recordFailure();
+      }
+
+      return response;
+
+    } catch (error) {
+      fluxApiCircuit.recordFailure();
+      log.error(`Failed to broadcast transaction: ${error.message}`);
+
+      // Send error notification
+      if (config.discord.enabled) {
+        const errorData = {
+          status: 'error',
+          error: error.message,
+          addressName: addressName || 'default',
+        };
+        discord.sendHook(txid, index, false, errorData, ipAddress);
+      }
+
+      throw error;
+    }
   }
+
+  // Main process flow
+  async processStartRequest(txid, index, ipAddress, addressName) {
+    const startTime = Date.now();
+
+    try {
+      log.info(`Processing start request: ${txid}:${index} with address: ${addressName || 'default'}`);
+
+      // Step 1: Fetch and validate collateral
+      const collateralInfo = await this.fetchCollateralInfo(txid, index);
+      log.info(`Collateral validated: ${collateralInfo.address} (${collateralInfo.type})`);
+
+      // Step 2: Find matching address configuration
+      let addressConfig;
+
+      if (addressName) {
+        // Specific address requested
+        addressConfig = this.getAddressConfig(addressName);
+
+        // Verify it matches the collateral
+        if (addressConfig.collateralAddress !== collateralInfo.address) {
+          throw new Error(
+            `Address mismatch: requested ${addressName} (${addressConfig.collateralAddress}) ` +
+            `but collateral is for ${collateralInfo.address}`
+          );
+        }
+      } else {
+        // Legacy mode: find matching address
+        addressConfig = this.findAddressByCollateral(collateralInfo.address);
+
+        if (!addressConfig) {
+          throw new Error(
+            `No configuration found for collateral address: ${collateralInfo.address}`
+          );
+        }
+      }
+
+      log.info(`Using address configuration: ${addressConfig.name}`);
+
+      // Step 3: Generate start transaction
+      const tx = await this.generateStartTransaction(
+        collateralInfo,
+        txid,
+        index,
+        addressConfig
+      );
+
+      // Step 4: Broadcast transaction
+      const result = await this.broadcastTransaction(
+        tx,
+        txid,
+        index,
+        ipAddress,
+        addressConfig.name
+      );
+
+      // Log performance metrics
+      const duration = Date.now() - startTime;
+      log.metric('start_request_duration', duration, {
+        success: true,
+        addressName: addressConfig.name,
+      });
+
+      return result;
+
+    } catch (error) {
+      // Log failure metrics
+      const duration = Date.now() - startTime;
+      log.metric('start_request_duration', duration, {
+        success: false,
+        error: error.message,
+      });
+
+      throw error;
+    }
+  }
+}
+
+// Create singleton instance
+const service = new FluxnodeService();
+
+// Express route handlers
+function getStartWrapper(req, res) {
+  const { txid, index, addressName } = req.params;
+  const ipAddress = req.ip;
+
+  service.processStartRequest(txid, index, ipAddress, addressName)
+    .then(result => {
+      res.json(result);
+    })
+    .catch(error => {
+      log.error(`Request failed: ${error.message}`);
+      res.status(500).json({
+        status: 'error',
+        error: error.message,
+      });
+    });
 }
 
 function getAddresses(req, res) {
   try {
-    const addressList = listAddresses();
+    const addresses = service.listAddresses();
     res.json({
       success: true,
-      addresses: addressList,
+      addresses,
+      count: addresses.length,
     });
   } catch (error) {
-    log.error(error);
-    res.status(500).json({ error: JSON.stringify(error) });
-  }
-}
-
-function getTest(req, res) {
-  try {
-    const response = { msg: 'backend works' };
-    res.json(response);
-  } catch (error) {
-    log.error(error);
-    res.status(500).json({ error: JSON.stringify(error) });
+    log.error(`Failed to list addresses: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      error: error.message,
+    });
   }
 }
 
 module.exports = {
-  validateCollateral,
-  getTest,
-  getStart,
+  FluxnodeService,
+  service,
+  getStartWrapper,
   getAddresses,
+  // Legacy exports for compatibility
+  getStart: getStartWrapper,
 };

@@ -3,6 +3,8 @@ node_modules/
 package-lock.json
 yarn.lock
 
+# Log files and directories
+logs/
 error.log
 warn.log
 debug.log
@@ -11,3 +13,16 @@ info.log
 personal.js
 
 .env
+
+# SSL certificates and keys (security sensitive)
+*.pem
+cert.pem
+key.pem
+csr.pem
+
+# Backup files and directories
+backup-original/
+backup/
+*.backup
+*.bak
+*.tmp
