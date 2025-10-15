@@ -13,6 +13,7 @@ const {
   trackRequest,
   securityHeaders,
   requestSizeLimiter,
+  getRealIp,
 } = require('../middleware/security');
 const { authenticateApiKey } = require('../middleware/auth');
 
@@ -112,7 +113,7 @@ app.get(
   validateTransactionParams,
   (req, res, next) => {
     const { txid, index } = req.params;
-    log.info(`API request: start fluxnode ${txid}:${index} from ${req.ip}`);
+    log.info(`API request: start fluxnode ${txid}:${index} from ${getRealIp(req)}`);
     next();
   },
   require('../../src/services/fluxnodeService').getStart
@@ -125,7 +126,7 @@ app.get(
   validateTransactionParams,
   (req, res, next) => {
     const { txid, index, addressName } = req.params;
-    log.info(`API request: start fluxnode ${txid}:${index} with address ${addressName} from ${req.ip}`);
+    log.info(`API request: start fluxnode ${txid}:${index} with address ${addressName} from ${getRealIp(req)}`);
     next();
   },
   require('../../src/services/fluxnodeService').getStart
@@ -135,7 +136,7 @@ app.get(
 app.get(
   `/${prefix}/addresses`,
   (req, res, next) => {
-    log.info(`API request: list addresses from ${req.ip}`);
+    log.info(`API request: list addresses from ${getRealIp(req)}`);
     next();
   },
   require('../../src/services/fluxnodeService').getAddresses
@@ -143,7 +144,7 @@ app.get(
 
 // 404 handler
 app.use((req, res) => {
-  log.warn(`404 Not Found: ${req.method} ${req.url} from ${req.ip}`);
+  log.warn(`404 Not Found: ${req.method} ${req.url} from ${getRealIp(req)}`);
   res.status(404).json({
     status: 'error',
     error: 'Endpoint not found',
@@ -160,7 +161,7 @@ app.use((err, req, res, next) => {
     error: err.stack,
     url: req.url,
     method: req.method,
-    ip: req.ip,
+    ip: getRealIp(req),
   });
 
   // Don't leak error details in production
