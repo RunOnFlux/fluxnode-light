@@ -17,7 +17,7 @@
   "license": "ISC",
   "dependencies": {
     "@runonflux/flux-sdk": "^1.0.2",
-    "axios": "^0.27.2",
+    "axios": "^1.12.2",
     "bitcoinjs-message": "^2.2.0",
     "bs58check": "^2.1.2",
     "compression": "^1.8.1",
@@ -31,7 +31,6 @@
     "groestl-hash-js": "^1.0.0",
     "helmet": "^8.1.0",
     "morgan": "^1.10.0",
-    "nodemon": "^2.0.16",
     "secp256k1": "^3.8.0",
     "winston": "^3.18.3",
     "winston-daily-rotate-file": "^5.0.0"
@@ -43,7 +42,8 @@
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-jsx-a11y": "^6.5.1",
     "eslint-plugin-react": "^7.29.4",
-    "mocha": "^9.2.2",
+    "mocha": "^11.7.4",
+    "nodemon": "^3.1.10",
     "power-assert": "^1.6.1",
     "supertest": "^6.2.3"
   }
