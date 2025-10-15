@@ -9,7 +9,7 @@ function getFilesizeInBytes(filename) {
     const fileSizeInBytes = stats.size;
     return fileSizeInBytes;
   } catch (e) {
-    console.log(e);
+    // File doesn't exist or can't be accessed, return 0
     return 0;
   }
 }
