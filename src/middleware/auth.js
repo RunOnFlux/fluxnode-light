@@ -1,4 +1,4 @@
-const log = require('../lib/log');
+const log = require('../lib/logger');
 
 /**
  * API Key Authentication Middleware

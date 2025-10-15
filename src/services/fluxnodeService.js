@@ -1,7 +1,7 @@
 const { fluxnode } = require('@runonflux/flux-sdk');
 const config = require('../../config/env-config');
 const ApiClient = require('../lib/api-client');
-const log = require('../lib/log');
+const log = require('../lib/logger');
 const discord = require('../../discord/hooks');
 
 // Initialize API client with retry logic

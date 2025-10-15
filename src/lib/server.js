@@ -72,6 +72,23 @@ if (nodeEnv !== 'test') {
   }
 }
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    status: 'success',
+    message: 'Fluxnode Light API',
+    version: process.env.npm_package_version || '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: {
+        start: '/api/start/:txid/:index',
+        startWithAddress: '/api/start/:txid/:index/:addressName',
+        addresses: '/api/addresses'
+      }
+    }
+  });
+});
+
 // Health check routes (no rate limiting)
 app.get('/health', healthRoutes.healthCheck);
 app.get('/health/liveness', healthRoutes.livenessProbe);
