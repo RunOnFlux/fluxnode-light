@@ -1,4 +1,4 @@
-const log = require('../lib/log');
+const log = require('../lib/logger');
 
 // Try to load rate limiting, but provide fallback if not available
 let rateLimit;
@@ -10,6 +10,26 @@ try {
   rateLimit = () => (req, res, next) => next();
 }
 
+// Helper function to get real IP address (works with or without CloudFlare)
+function getRealIp(req) {
+  // CloudFlare specific header (most reliable when behind CF)
+  if (req.headers['cf-connecting-ip']) {
+    return req.headers['cf-connecting-ip'];
+  }
+
+  // Standard forwarded headers (could be spoofed if not behind proxy)
+  if (req.headers['x-forwarded-for']) {
+    return req.headers['x-forwarded-for'].split(',')[0].trim();
+  }
+
+  if (req.headers['x-real-ip']) {
+    return req.headers['x-real-ip'];
+  }
+
+  // Fallback to direct connection
+  return req.connection.remoteAddress || req.ip;
+}
+
 // Create rate limiter for API endpoints
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -17,8 +37,13 @@ const apiLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true, // Return rate limit info in headers
   legacyHeaders: false,
+  // Custom key generator using our getRealIp function
+  keyGenerator: (req) => getRealIp(req),
+  // Skip validation since we handle IP detection ourselves
+  validate: false,
   handler: (req, res) => {
-    log.warn(`Rate limit exceeded for IP: ${req.ip}`);
+    const realIp = getRealIp(req);
+    log.warn(`Rate limit exceeded for IP: ${realIp}`);
     res.status(429).json({
       status: 'error',
       error: 'Too many requests. Please wait before trying again.',
@@ -32,8 +57,13 @@ const transactionLimiter = rateLimit({
   max: 10, // Limit each IP to 10 transaction requests per windowMs
   message: 'Too many transaction requests from this IP.',
   skipSuccessfulRequests: false,
+  // Custom key generator using our getRealIp function
+  keyGenerator: (req) => getRealIp(req),
+  // Skip validation since we handle IP detection ourselves
+  validate: false,
   handler: (req, res) => {
-    log.warn(`Transaction rate limit exceeded for IP: ${req.ip}`);
+    const realIp = getRealIp(req);
+    log.warn(`Transaction rate limit exceeded for IP: ${realIp}`);
     res.status(429).json({
       status: 'error',
       error: 'Too many transaction requests. Please wait 5 minutes.',
@@ -45,7 +75,7 @@ const transactionLimiter = rateLimit({
 const requestTracker = new Map();
 
 function trackRequest(req, res, next) {
-  const ip = req.ip;
+  const ip = getRealIp(req);  // Use our helper function
   const now = Date.now();
 
   if (!requestTracker.has(ip)) {
@@ -93,7 +123,8 @@ function requestSizeLimiter(req, res, next) {
   const maxSize = 1024 * 100; // 100KB
 
   if (contentLength && parseInt(contentLength) > maxSize) {
-    log.warn(`Request size too large from IP ${req.ip}: ${contentLength} bytes`);
+    const realIp = getRealIp(req);
+    log.warn(`Request size too large from IP ${realIp}: ${contentLength} bytes`);
     return res.status(413).json({
       status: 'error',
       error: 'Request payload too large',
@@ -109,4 +140,5 @@ module.exports = {
   trackRequest,
   securityHeaders,
   requestSizeLimiter,
+  getRealIp, // Export helper function for use in other modules
 };

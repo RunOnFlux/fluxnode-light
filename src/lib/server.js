@@ -23,8 +23,9 @@ const nodeEnv = process.env.NODE_ENV || 'production';
 
 const app = express();
 
-// Trust proxy for accurate IP addresses
-app.set('trust proxy', true);
+// Trust proxy for accurate IP addresses when behind CloudFlare/proxy
+// Setting to 'loopback' is safer than 'true' - it only trusts local proxies
+app.set('trust proxy', 'loopback');
 
 // Security middleware
 app.use(helmet({
