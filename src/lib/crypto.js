@@ -35,8 +35,9 @@ function hash160(buffer) {
   return ripemd160(Buffer.from(sha, 'hex'));
 }
 
+// Returns hex string for consistency with other hash functions
 function groestl(buffer) {
-  return Buffer.from(groestlhash.groestl_2(buffer, 1, 1), 'hex');
+  return groestlhash.groestl_2(buffer, 1, 1);
 }
 
 module.exports = {

@@ -1,12 +1,13 @@
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
-const dotenv = require('dotenv');
 const config = require('../config/env-config');
+const log = require('../src/lib/logger');
 
-dotenv.config();
-
-const hook = new Webhook(`${process.env.WEB_HOOK || config.discordHook}`);
+const webhookUrl = config.discord.webhookUrl;
+const hook = webhookUrl ? new Webhook(webhookUrl) : null;
 
 async function sendHook(txid, index, success, status, ipAddress) {
+  if (!hook) return;
+
   try {
     let color = '#2ECC71'; // Green
 
@@ -21,7 +22,6 @@ async function sendHook(txid, index, success, status, ipAddress) {
     if (typeof status === 'object' && status !== null) {
       if (status.addressName) {
         addressName = status.addressName;
-        // Create a copy without addressName for the message
         const { addressName: _, ...restStatus } = status;
         statusMessage = restStatus;
       }
@@ -39,6 +39,7 @@ async function sendHook(txid, index, success, status, ipAddress) {
 
     // Truncate message if too long (Discord has field limits)
     if (messageText.length > 1024) {
+      log.warn(`Discord message truncated for ${txid}:${index} (${messageText.length} chars)`);
       messageText = messageText.substring(0, 1021) + '...';
     }
 
@@ -55,8 +56,7 @@ async function sendHook(txid, index, success, status, ipAddress) {
 
     await hook.send(embed);
   } catch (error) {
-    // Log the error but don't crash the service
-    console.error('Error sending Discord webhook:', error.message);
+    log.error(`Discord webhook failed for ${txid}:${index}: ${error.message}`);
   }
 }
 

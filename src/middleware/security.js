@@ -1,14 +1,8 @@
 const log = require('../lib/logger');
+const config = require('../../config/env-config');
 
-// Try to load rate limiting, but provide fallback if not available
-let rateLimit;
-try {
-  rateLimit = require('express-rate-limit');
-} catch (error) {
-  log.warn('express-rate-limit not installed. Rate limiting disabled.');
-  // Fallback middleware that does nothing
-  rateLimit = () => (req, res, next) => next();
-}
+// Fail hard if rate limiting module is missing — security should not silently degrade
+const rateLimit = require('express-rate-limit');
 
 // Helper function to get real IP address (works with or without CloudFlare)
 function getRealIp(req) {
@@ -30,16 +24,14 @@ function getRealIp(req) {
   return req.connection.remoteAddress || req.ip;
 }
 
-// Create rate limiter for API endpoints
+// Create rate limiter for API endpoints — values from config
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.maxRequests,
   message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in headers
+  standardHeaders: true,
   legacyHeaders: false,
-  // Custom key generator using our getRealIp function
   keyGenerator: (req) => getRealIp(req),
-  // Skip validation since we handle IP detection ourselves
   validate: false,
   handler: (req, res) => {
     const realIp = getRealIp(req);
@@ -51,34 +43,50 @@ const apiLimiter = rateLimit({
   },
 });
 
-// Stricter rate limit for transaction endpoints
+// Stricter rate limit for transaction endpoints — values from config
 const transactionLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 10, // Limit each IP to 10 transaction requests per windowMs
+  windowMs: config.rateLimit.transactionWindowMs,
+  max: config.rateLimit.transactionMaxRequests,
   message: 'Too many transaction requests from this IP.',
   skipSuccessfulRequests: false,
-  // Custom key generator using our getRealIp function
   keyGenerator: (req) => getRealIp(req),
-  // Skip validation since we handle IP detection ourselves
   validate: false,
   handler: (req, res) => {
     const realIp = getRealIp(req);
     log.warn(`Transaction rate limit exceeded for IP: ${realIp}`);
     res.status(429).json({
       status: 'error',
-      error: 'Too many transaction requests. Please wait 5 minutes.',
+      error: 'Too many transaction requests. Please wait before trying again.',
     });
   },
 });
 
-// IP-based request tracking for suspicious activity
+// IP-based request tracking for suspicious activity with deterministic cleanup
 const requestTracker = new Map();
+const TRACKER_MAX_SIZE = 10000;
+const TRACKER_CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+
+// Deterministic cleanup on interval
+setInterval(() => {
+  const cutoff = Date.now() - TRACKER_CLEANUP_INTERVAL;
+  for (const [ip, data] of requestTracker.entries()) {
+    if (data.lastRequest < cutoff) {
+      requestTracker.delete(ip);
+    }
+  }
+}, TRACKER_CLEANUP_INTERVAL);
 
 function trackRequest(req, res, next) {
-  const ip = getRealIp(req);  // Use our helper function
+  const ip = getRealIp(req);
   const now = Date.now();
 
   if (!requestTracker.has(ip)) {
+    // Enforce max size — evict oldest entry if at capacity
+    if (requestTracker.size >= TRACKER_MAX_SIZE) {
+      const oldestKey = requestTracker.keys().next().value;
+      requestTracker.delete(oldestKey);
+    }
+
     requestTracker.set(ip, {
       count: 1,
       firstRequest: now,
@@ -91,19 +99,10 @@ function trackRequest(req, res, next) {
 
     // Alert on suspicious patterns
     const timeDiff = now - tracker.firstRequest;
-    const requestsPerMinute = (tracker.count / (timeDiff / 60000));
-
-    if (requestsPerMinute > 30) {
-      log.warn(`Suspicious activity detected from IP ${ip}: ${requestsPerMinute.toFixed(2)} requests/min`);
-    }
-  }
-
-  // Clean up old entries every hour
-  if (Math.random() < 0.001) { // Probabilistic cleanup
-    const oneHourAgo = now - (60 * 60 * 1000);
-    for (const [ip, data] of requestTracker.entries()) {
-      if (data.lastRequest < oneHourAgo) {
-        requestTracker.delete(ip);
+    if (timeDiff > 0) {
+      const requestsPerMinute = (tracker.count / (timeDiff / 60000));
+      if (requestsPerMinute > 30) {
+        log.warn(`Suspicious activity detected from IP ${ip}: ${requestsPerMinute.toFixed(2)} requests/min`);
       }
     }
   }
@@ -111,18 +110,12 @@ function trackRequest(req, res, next) {
   next();
 }
 
-// Security headers middleware
-function securityHeaders() {
-  // Return a no-op middleware if helmet is not available
-  return (req, res, next) => next();
-}
-
 // Request size limiter
 function requestSizeLimiter(req, res, next) {
   const contentLength = req.headers['content-length'];
-  const maxSize = 1024 * 100; // 100KB
+  const maxSize = config.security.requestSizeLimit;
 
-  if (contentLength && parseInt(contentLength) > maxSize) {
+  if (contentLength && parseInt(contentLength, 10) > maxSize) {
     const realIp = getRealIp(req);
     log.warn(`Request size too large from IP ${realIp}: ${contentLength} bytes`);
     return res.status(413).json({
@@ -138,7 +131,6 @@ module.exports = {
   apiLimiter,
   transactionLimiter,
   trackRequest,
-  securityHeaders,
   requestSizeLimiter,
-  getRealIp, // Export helper function for use in other modules
+  getRealIp,
 };

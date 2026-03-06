@@ -25,13 +25,11 @@ module.exports = {
     ],
     'linebreak-style': 'off',
   },
-  parserOptions: {
-    parser: 'babel-eslint',
-  },
   overrides: [
     {
       files: [
         '**/__tests__/*.{j,t}s?(x)',
+        'test/**/*.test.js',
       ],
       env: {
         mocha: true,

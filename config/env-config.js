@@ -1,5 +1,12 @@
 require('dotenv').config();
 
+// Parse delegate public keys for an address (comma-separated)
+function parseDelegateKeys(addressIndex) {
+  const raw = process.env[`ADDRESS_${addressIndex}_DELEGATE_PUBLIC_KEYS`];
+  if (!raw) return [];
+  return raw.split(',').map(k => k.trim()).filter(k => k.length === 66);
+}
+
 // Helper function to parse addresses from environment variables
 function parseAddresses() {
   const addresses = [];
@@ -13,6 +20,9 @@ function parseAddresses() {
       fluxnodePrivateKey: process.env[`ADDRESS_${index}_FLUXNODE_PRIVATE_KEY`],
       p2shprivkey: process.env[`ADDRESS_${index}_P2SH_PRIVATE_KEY`],
       redeemScript: process.env[`ADDRESS_${index}_REDEEM_SCRIPT`],
+      // Optional delegate configuration
+      delegatePublicKeys: parseDelegateKeys(index),
+      delegatePrivateKey: process.env[`ADDRESS_${index}_DELEGATE_PRIVATE_KEY`] || null,
     };
 
     // Validate that all required fields are present
@@ -20,7 +30,13 @@ function parseAddresses() {
         address.p2shprivkey && address.redeemScript) {
       addresses.push(address);
     } else {
-      console.warn(`Warning: Address ${index} is missing required fields and will be skipped`);
+      const missing = [];
+      if (!address.collateralAddress) missing.push('COLLATERAL_ADDRESS');
+      if (!address.fluxnodePrivateKey) missing.push('FLUXNODE_PRIVATE_KEY');
+      if (!address.p2shprivkey) missing.push('P2SH_PRIVATE_KEY');
+      if (!address.redeemScript) missing.push('REDEEM_SCRIPT');
+      // Use console.warn here since logger may not be initialized yet
+      console.warn(`Warning: Address ${index} (${address.name}) is missing required fields: ${missing.join(', ')} — skipped`);
     }
 
     index++;
@@ -55,8 +71,8 @@ module.exports = {
   },
 
   discord: {
-    webhookUrl: process.env.DISCORD_WEBHOOK_URL,
-    enabled: !!process.env.DISCORD_WEBHOOK_URL,
+    webhookUrl: process.env.DISCORD_WEBHOOK_URL || process.env.WEB_HOOK,
+    enabled: !!(process.env.DISCORD_WEBHOOK_URL || process.env.WEB_HOOK),
   },
 
   api: {
@@ -84,7 +100,7 @@ module.exports = {
   security: {
     enableHelmet: getEnvBoolean('ENABLE_HELMET', true),
     enableCors: getEnvBoolean('ENABLE_CORS', true),
-    corsOrigin: process.env.CORS_ORIGIN || '*',
+    corsOrigin: process.env.CORS_ORIGIN || 'same-origin',
     requestSizeLimit: getEnvNumber('REQUEST_SIZE_LIMIT', 102400), // 100KB
   },
 
@@ -106,7 +122,4 @@ module.exports = {
 
   // Multi-address configuration
   addresses: parseAddresses(),
-
-  // Legacy support - for backward compatibility
-  discordHook: process.env.DISCORD_WEBHOOK_URL || process.env.WEB_HOOK,
 };

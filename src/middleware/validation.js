@@ -1,4 +1,4 @@
-const log = require('../lib/log');
+const log = require('../lib/logger');
 
 // Validate transaction ID (should be 64 character hex string)
 function validateTxid(txid) {
@@ -12,10 +12,10 @@ function validateIndex(index) {
   return !isNaN(num) && num >= 0 && num <= 9999 && num.toString() === index;
 }
 
-// Validate address name (alphanumeric with spaces, underscores, dashes)
+// Validate address name (alphanumeric with underscores, dashes — no spaces)
 function validateAddressName(name) {
   if (!name) return true; // Optional parameter
-  const nameRegex = /^[a-zA-Z0-9\s_-]{1,50}$/;
+  const nameRegex = /^[a-zA-Z0-9_-]{1,50}$/;
   return nameRegex.test(name);
 }
 

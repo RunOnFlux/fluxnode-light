@@ -1,4 +1,6 @@
+const crypto = require('crypto');
 const log = require('../lib/logger');
+const { getRealIp } = require('./security');
 
 /**
  * API Key Authentication Middleware
@@ -12,19 +14,15 @@ function isAuthEnabled() {
   return process.env.API_KEY_REQUIRED === 'true' && process.env.NODE_ENV === 'production';
 }
 
-// Get configured API keys from environment variables
-// Looks for API_KEY_* environment variables
-function getValidApiKeys() {
+// Parse all API key config once and cache it
+function getApiKeyConfig() {
   const apiKeys = {};
-  const validKeys = [];
 
-  // Look for all environment variables starting with API_KEY_
   for (const [key, value] of Object.entries(process.env)) {
     if (key.startsWith('API_KEY_') && key !== 'API_KEY_REQUIRED') {
       const keyName = key.replace('API_KEY_', '');
       if (value && value !== 'your_' + keyName.toLowerCase() + '_api_key_here') {
         apiKeys[keyName] = value;
-        validKeys.push(value);
       }
     }
   }
@@ -33,42 +31,31 @@ function getValidApiKeys() {
   if (process.env.API_KEYS) {
     const legacyKeys = process.env.API_KEYS.split(',').map(k => k.trim()).filter(k => k.length > 0);
     legacyKeys.forEach(key => {
-      if (!validKeys.includes(key)) {
-        validKeys.push(key);
+      if (!Object.values(apiKeys).includes(key)) {
         apiKeys['LEGACY'] = key;
       }
     });
   }
 
-  return validKeys;
-}
-
-// Get API key configuration with names
-function getApiKeyConfig() {
-  const apiKeys = {};
-
-  // Look for all environment variables starting with API_KEY_
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith('API_KEY_') && key !== 'API_KEY_REQUIRED') {
-      const keyName = key.replace('API_KEY_', '');
-      if (value && value !== 'your_' + keyName.toLowerCase() + '_api_key_here') {
-        apiKeys[keyName] = value;
-      }
-    }
-  }
-
   return apiKeys;
 }
 
-// Find which named key was used
-function getKeyName(apiKey) {
-  const config = getApiKeyConfig();
-  for (const [name, key] of Object.entries(config)) {
-    if (key === apiKey) {
-      return name;
+// Constant-time API key comparison to prevent timing attacks
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+// Find a matching key using constant-time comparison, returns [name, matched]
+function findMatchingKey(keyToCheck, apiKeys) {
+  let matchedName = null;
+  for (const [name, key] of Object.entries(apiKeys)) {
+    if (safeCompare(keyToCheck, key)) {
+      matchedName = name;
     }
   }
-  return 'UNKNOWN';
+  return matchedName;
 }
 
 // Get whitelisted IPs that don't need API key (comma-separated)
@@ -84,12 +71,12 @@ function authenticateApiKey(req, res, next) {
     return next();
   }
 
-  // Skip auth for health check endpoints
-  if (req.path.startsWith('/health') || req.path === '/metrics') {
+  // Skip auth for health check endpoints (metrics requires auth via route-level middleware)
+  if (req.path.startsWith('/health')) {
     return next();
   }
 
-  const clientIp = req.ip || req.connection.remoteAddress;
+  const clientIp = getRealIp(req);
 
   // Check if IP is whitelisted
   const whitelistedIPs = getWhitelistedIPs();
@@ -110,9 +97,10 @@ function authenticateApiKey(req, res, next) {
   }
 
   // Validate API key
-  const validKeys = getValidApiKeys();
+  const apiKeys = getApiKeyConfig();
+  const validKeyCount = Object.keys(apiKeys).length;
 
-  if (validKeys.length === 0) {
+  if (validKeyCount === 0) {
     log.error('No API keys configured but API_KEY_REQUIRED is true');
     return res.status(500).json({
       status: 'error',
@@ -120,10 +108,11 @@ function authenticateApiKey(req, res, next) {
     });
   }
 
-  // Check if provided key is valid
+  // Check if provided key is valid using constant-time comparison
   const keyToCheck = apiKey.replace('Bearer ', '').trim();
+  const keyName = findMatchingKey(keyToCheck, apiKeys);
 
-  if (!validKeys.includes(keyToCheck)) {
+  if (!keyName) {
     log.warn(`Invalid API key attempt from IP: ${clientIp}`);
     log.audit('INVALID_API_KEY', {
       ip: clientIp,
@@ -137,8 +126,7 @@ function authenticateApiKey(req, res, next) {
     });
   }
 
-  // API key is valid
-  const keyName = getKeyName(keyToCheck);
+  // API key is valid — store only the key name, never the key itself
   log.info(`Valid API key (${keyName}) used by IP: ${clientIp} for ${req.path}`);
   log.audit('API_KEY_USED', {
     keyName,
@@ -147,17 +135,14 @@ function authenticateApiKey(req, res, next) {
     method: req.method,
   });
 
-  // Store which key was used (for tracking)
   req.apiKeyName = keyName;
-  req.apiKey = keyToCheck;
 
   next();
 }
 
 // Middleware to require API key for specific routes only
 function requireApiKey(req, res, next) {
-  // Force authentication regardless of environment
-  const clientIp = req.ip || req.connection.remoteAddress;
+  const clientIp = getRealIp(req);
 
   // Check for API key in headers
   const apiKey = req.headers['x-api-key'] || req.headers['authorization'];
@@ -170,11 +155,11 @@ function requireApiKey(req, res, next) {
     });
   }
 
-  // Validate API key
-  const validKeys = getValidApiKeys();
+  // Validate API key using constant-time comparison
+  const apiKeys = getApiKeyConfig();
   const keyToCheck = apiKey.replace('Bearer ', '').trim();
 
-  if (!validKeys.includes(keyToCheck)) {
+  if (!findMatchingKey(keyToCheck, apiKeys)) {
     log.warn(`Invalid API key for protected route from IP: ${clientIp}`);
     return res.status(401).json({
       status: 'error',
@@ -187,7 +172,6 @@ function requireApiKey(req, res, next) {
 
 // Generate a random API key
 function generateApiKey() {
-  const crypto = require('crypto');
   return crypto.randomBytes(32).toString('hex');
 }
 
@@ -196,10 +180,10 @@ function hasValidApiKey(req) {
   const apiKey = req.headers['x-api-key'] || req.headers['authorization'];
   if (!apiKey) return false;
 
-  const validKeys = getValidApiKeys();
+  const apiKeys = getApiKeyConfig();
   const keyToCheck = apiKey.replace('Bearer ', '').trim();
 
-  return validKeys.includes(keyToCheck);
+  return !!findMatchingKey(keyToCheck, apiKeys);
 }
 
 module.exports = {

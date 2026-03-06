@@ -1,5 +1,19 @@
 const axios = require('axios');
-const log = require('./log');
+const log = require('./logger');
+
+// Maximum backoff delay to prevent excessively long waits
+const MAX_BACKOFF_MS = 30000;
+
+class ApiClientError extends Error {
+  constructor(message, { status, isTimeout, isNetworkError, originalError } = {}) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.status = status;
+    this.isTimeout = isTimeout || false;
+    this.isNetworkError = isNetworkError || false;
+    this.originalError = originalError;
+  }
+}
 
 class ApiClient {
   constructor(config = {}) {
@@ -10,6 +24,11 @@ class ApiClient {
     this.cacheEnabled = config.cacheEnabled !== false;
     this.cacheTTL = config.cacheTTL || 300000; // 5 minutes
     this.maxCacheSize = config.maxCacheSize || 100;
+
+    // Deterministic cache cleanup on interval
+    this._cleanupInterval = setInterval(() => this.cleanCache(), this.cacheTTL);
+    // Allow the timer to not block process exit
+    if (this._cleanupInterval.unref) this._cleanupInterval.unref();
   }
 
   // Clean up expired cache entries
@@ -21,7 +40,7 @@ class ApiClient {
       }
     }
 
-    // Enforce max cache size
+    // Enforce max cache size — evict oldest entries
     if (this.cache.size > this.maxCacheSize) {
       const toDelete = this.cache.size - this.maxCacheSize;
       const keys = Array.from(this.cache.keys());
@@ -56,16 +75,17 @@ class ApiClient {
       data,
       timestamp: Date.now(),
     });
-
-    // Periodic cleanup
-    if (Math.random() < 0.1) {
-      this.cleanCache();
-    }
   }
 
-  // Exponential backoff calculation
+  // Explicitly invalidate a cache entry
+  invalidateCache(url) {
+    this.cache.delete(url);
+  }
+
+  // Exponential backoff with cap
   getBackoffDelay(attempt) {
-    return this.retryDelay * Math.pow(2, attempt) + Math.random() * 1000;
+    const delay = this.retryDelay * Math.pow(2, attempt) + Math.random() * 1000;
+    return Math.min(delay, MAX_BACKOFF_MS);
   }
 
   // Check if error is retryable
@@ -92,7 +112,6 @@ class ApiClient {
       const requestConfig = {
         url,
         timeout: this.timeout,
-        validateStatus: (status) => status < 500,
         ...options,
       };
 
@@ -112,7 +131,7 @@ class ApiClient {
 
       if (isRetryable && hasRetriesLeft) {
         const delay = this.getBackoffDelay(attempt);
-        log.warn(`Request to ${url} failed (attempt ${attempt + 1}/${this.maxRetries}). Retrying in ${delay}ms...`);
+        log.warn(`Request to ${url} failed (attempt ${attempt + 1}/${this.maxRetries}). Retrying in ${Math.round(delay)}ms...`);
         log.debug(`Error: ${error.message}`);
 
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -123,13 +142,12 @@ class ApiClient {
       const errorMessage = error.response?.data?.error || error.message;
       log.error(`Request to ${url} failed after ${attempt + 1} attempts: ${errorMessage}`);
 
-      throw {
-        message: errorMessage,
+      throw new ApiClientError(errorMessage, {
         status: error.response?.status,
         isTimeout: error.code === 'ECONNABORTED',
         isNetworkError: !error.response,
         originalError: error,
-      };
+      });
     }
   }
 
@@ -163,7 +181,7 @@ class ApiClient {
 
         if (this.failures >= this.threshold) {
           this.isOpen = true;
-          log.error(`Circuit breaker opened for ${this.name} after ${this.failures} failures`);
+          log.warn(`Circuit breaker opened for ${this.name} after ${this.failures} failures`);
         }
       },
 
@@ -172,9 +190,9 @@ class ApiClient {
 
         const timeSinceFailure = Date.now() - this.lastFailure;
         if (timeSinceFailure > this.resetTime) {
-          log.info(`Circuit breaker for ${this.name} attempting reset after ${timeSinceFailure}ms`);
+          log.warn(`Circuit breaker for ${this.name} attempting reset after ${timeSinceFailure}ms`);
           this.isOpen = false;
-          this.failures = Math.floor(this.failures / 2); // Half-open state
+          this.failures = 0; // Full reset on half-open attempt
           return true;
         }
 

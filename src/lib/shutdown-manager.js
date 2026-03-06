@@ -1,4 +1,4 @@
-const log = require('./log');
+const log = require('./logger');
 
 class ShutdownManager {
   constructor(server, options = {}) {
@@ -40,15 +40,16 @@ class ShutdownManager {
 
     // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
-      log.error(`Uncaught Exception: ${error.message}`);
-      log.error(error.stack);
+      log.error(`Uncaught Exception: ${error.message}`, { stack: error.stack });
       this.emergencyShutdown(1);
     });
 
-    // Handle unhandled promise rejections
+    // Handle unhandled promise rejections — trigger shutdown
     process.on('unhandledRejection', (reason, promise) => {
-      log.error(`Unhandled Rejection at: ${promise}`);
-      log.error(`Reason: ${reason}`);
+      log.error(`Unhandled Rejection: ${reason}`, {
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      this.emergencyShutdown(1);
     });
 
     // Windows-specific signal
@@ -108,7 +109,9 @@ class ShutdownManager {
       try {
         await callback();
       } catch (error) {
-        log.error(`Shutdown callback failed: ${error.message}`);
+        // Fallback to console in case logger is broken during shutdown
+        const msg = `Shutdown callback failed: ${error.message}`;
+        try { log.error(msg); } catch { console.error(msg); }
       }
     }
 
@@ -150,10 +153,6 @@ class ShutdownManager {
       log.info('Executing cleanup tasks...');
       await this.executeCallbacks();
 
-      // Step 4: Final cleanup
-      log.info('Final cleanup...');
-      await this.finalCleanup();
-
       clearTimeout(shutdownTimer);
       log.info('Graceful shutdown completed successfully');
       process.exit(0);
@@ -175,26 +174,6 @@ class ShutdownManager {
 
     // Force exit
     process.exit(exitCode);
-  }
-
-  // Final cleanup tasks
-  async finalCleanup() {
-    try {
-      // Flush logs
-      if (global.logStream) {
-        await new Promise(resolve => {
-          global.logStream.end(resolve);
-        });
-      }
-
-      // Close database connections (if any)
-      // Close cache connections (if any)
-      // Save state (if needed)
-
-      log.info('Final cleanup completed');
-    } catch (error) {
-      log.error(`Final cleanup failed: ${error.message}`);
-    }
   }
 
   // Get shutdown status
