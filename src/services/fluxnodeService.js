@@ -573,6 +573,18 @@ function startAsDelegate(req, res) {
 
   const options = { delegatePrivateKey };
   if (fluxnodePrivateKey && redeemScript) {
+    if (typeof fluxnodePrivateKey !== 'string' || fluxnodePrivateKey.length < 50 || fluxnodePrivateKey.length > 60) {
+      return res.status(400).json({
+        status: 'error',
+        error: 'fluxnodePrivateKey must be a valid WIF string',
+      });
+    }
+    if (typeof redeemScript !== 'string' || !/^[a-f0-9]+$/i.test(redeemScript) || redeemScript.length > 1024) {
+      return res.status(400).json({
+        status: 'error',
+        error: 'redeemScript must be a valid hex string',
+      });
+    }
     options.fluxnodePrivateKey = fluxnodePrivateKey;
     options.redeemScript = redeemScript;
   }
