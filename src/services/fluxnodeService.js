@@ -335,6 +335,8 @@ class FluxnodeService {
   // Main process flow
   // options.delegatePublicKeys: array of delegate public keys to register (owner mode)
   // options.delegatePrivateKey: delegate private key for starting as delegate
+  // options.fluxnodePrivateKey: fluxnode identity key (allows delegate start without address in .env)
+  // options.redeemScript: redeem script (allows delegate start without address in .env)
   async processStartRequest(txid, index, ipAddress, addressName, options = {}) {
     const startTime = Date.now();
 
@@ -352,11 +354,21 @@ class FluxnodeService {
       const collateralInfo = await this.fetchCollateralInfo(txid, index);
       log.info(`Collateral validated: ${collateralInfo.address} (${collateralInfo.type})`);
 
-      // Step 2: Find matching address configuration
+      // Step 2: Find or build address configuration
       let addressConfig;
 
-      if (addressName) {
-        // Specific address requested
+      // For delegate starts, caller can provide all required keys directly
+      // This allows starting nodes not configured in .env
+      if (options.delegatePrivateKey && options.fluxnodePrivateKey && options.redeemScript) {
+        addressConfig = {
+          name: addressName || 'delegate-provided',
+          collateralAddress: collateralInfo.address,
+          fluxnodePrivateKey: options.fluxnodePrivateKey,
+          redeemScript: options.redeemScript,
+        };
+        log.info(`Using caller-provided keys for delegate start (no .env config needed)`);
+      } else if (addressName) {
+        // Specific address requested from config
         addressConfig = this.getAddressConfig(addressName);
 
         // Verify it matches the collateral
@@ -536,12 +548,13 @@ function startWithDelegate(req, res) {
 }
 
 // POST /api/start-as-delegate/:txid/:index/:addressName
-// Body: { delegatePrivateKey: "WIF-format-key" }
+// Body: { delegatePrivateKey: "WIF-key", fluxnodePrivateKey?: "WIF-key", redeemScript?: "hex" }
 // Starts a node using delegate authority (delegate operation)
+// If fluxnodePrivateKey and redeemScript are provided, no .env address config is needed
 function startAsDelegate(req, res) {
   const { txid, index, addressName } = req.params;
   const ipAddress = getRealIp(req);
-  const { delegatePrivateKey } = req.body || {};
+  const { delegatePrivateKey, fluxnodePrivateKey, redeemScript } = req.body || {};
 
   if (!delegatePrivateKey || typeof delegatePrivateKey !== 'string') {
     return res.status(400).json({
@@ -550,7 +563,21 @@ function startAsDelegate(req, res) {
     });
   }
 
-  service.processStartRequest(txid, index, ipAddress, addressName, { delegatePrivateKey })
+  // If providing keys directly, both are required together
+  if ((fluxnodePrivateKey && !redeemScript) || (!fluxnodePrivateKey && redeemScript)) {
+    return res.status(400).json({
+      status: 'error',
+      error: 'fluxnodePrivateKey and redeemScript must both be provided together',
+    });
+  }
+
+  const options = { delegatePrivateKey };
+  if (fluxnodePrivateKey && redeemScript) {
+    options.fluxnodePrivateKey = fluxnodePrivateKey;
+    options.redeemScript = redeemScript;
+  }
+
+  service.processStartRequest(txid, index, ipAddress, addressName, options)
     .then(result => res.json(result))
     .catch(error => {
       log.error(`Start-as-delegate failed for ${txid}:${index}: ${error.message}`);
